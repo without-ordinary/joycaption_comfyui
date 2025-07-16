@@ -1,4 +1,3 @@
-import llama_cpp
 import torch
 from transformers import AutoProcessor, LlavaForConditionalGeneration
 import folder_paths
@@ -162,7 +161,7 @@ def build_prompt(caption_type: str, caption_length: str | int, extra_options: li
     return final_prompt.strip()
 
 class JoyCaptionPredictor:
-    def __init__(self, checkpoint_path: str, memory_mode: str, precision, device=None):
+    def __init__(self, checkpoint_path: str, memory_mode: str, precision, device=None, lora=None):
         if device is not None:
             self.device = torch.device(device)
         else:
@@ -189,6 +188,10 @@ class JoyCaptionPredictor:
                 str(checkpoint_path),
                 quantization_config=qnt_config
             )
+
+        if lora is not None:
+            from peft import PeftModel
+            self.model = PeftModel.from_pretrained(self.model, lora)
     
     def generate(self, image: Image.Image, system: str, prompt: str, max_new_tokens: int, temperature: float,
                  top_p: float, top_k: int, seed: int=None, keep_model_loaded: bool=False) -> str:
@@ -259,6 +262,8 @@ class JoyCaptionPredictor:
 
 model_directory = os.path.join(folder_paths.models_dir, "LLavacheckpoints")
 os.makedirs(model_directory, exist_ok=True)
+lora_directory = os.path.join(folder_paths.models_dir, "LLavaloras")
+os.makedirs(lora_directory, exist_ok=True)
 
 # https://github.com/kijai/ComfyUI-Florence2/blob/de485b65b3e1b9b887ab494afa236dff4bef9a7e/nodes.py#L36
 def create_path_dict(paths: list[str], predicate: Callable[[Path], bool] = lambda _: True) -> dict[str, str]:
@@ -312,6 +317,9 @@ class JoyCaptionDownloadAndLoad:
                     {"default": current_devices[1] if len(current_devices) > 1 else current_devices[0]}
                 ),
             },
+            "optional": {
+                "lora": ("JOYCAPTIONLORA",),
+            }
         }
 
     RETURN_TYPES = ("JOYCAPTIONMODEL",)
@@ -319,7 +327,7 @@ class JoyCaptionDownloadAndLoad:
     FUNCTION = "loadmodel"
     CATEGORY = "JoyCaption"
 
-    def loadmodel(self, model, memory_mode, precision_default, device):
+    def loadmodel(self, model, memory_mode, precision_default, device, lora=None):
         model_name = model.rsplit('/', 1)[-1]
         model_path = os.path.join(model_directory, model_name)
 
@@ -330,7 +338,7 @@ class JoyCaptionDownloadAndLoad:
                               local_dir=model_path,
                               local_dir_use_symlinks=False)
 
-        model = JoyCaptionPredictor(model_path, memory_mode, precision_default, device=device)
+        model = JoyCaptionPredictor(model_path, memory_mode, precision_default, device=device, lora=None)
 
         return (model,)
 
@@ -350,6 +358,9 @@ class JoyCaptionLoader:
                 "precision_default": ([ 'fp16','bf16','fp32'], {"default": 'fp16'}),
                 "device": (devices, {"default": devices[1] if len(devices) > 1 else devices[0]}),
             },
+            "optional": {
+                "lora": ("JOYCAPTIONLORA",),
+            }
         }
 
     RETURN_TYPES = ("JOYCAPTIONMODEL",)
@@ -357,12 +368,34 @@ class JoyCaptionLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "JoyCaption"
 
-    def loadmodel(self, model, memory_mode, precision_default, device):
+    def loadmodel(self, model, memory_mode, precision_default, device, lora=None):
         torch_device = get_comfyui_devices(device_type="torch")
         offload_device = get_comfyui_devices(device_type="offload")
         model_path = JoyCaptionLoader.model_paths.get(model)
-        model = JoyCaptionPredictor(model_path, memory_mode, precision_default, device=device)
+        model = JoyCaptionPredictor(model_path, memory_mode, precision_default, device=device, lora=None)
         return (model,)
+
+
+class JoyCaptionLora:
+    @classmethod
+    def INPUT_TYPES(s):
+        all_llm_paths = folder_paths.get_folder_paths("LLavaloras")
+        s.model_paths = create_path_dict(all_llm_paths, lambda x: x.is_dir())
+        return {
+            "required": {
+                "model": ([*s.model_paths],
+                          {"tooltip": "models are expected to be in Comfyui/models/LLavacheckpoints folder"}),
+            },
+        }
+
+    RETURN_TYPES = ("JOYCAPTIONLORA",)
+    RETURN_NAMES = ("lora",)
+    FUNCTION = "loadmodel"
+    CATEGORY = "JoyCaption"
+
+    def loadmodel(self, model):
+        model_path = JoyCaptionLoader.model_paths.get(model)
+        return (model_path,)
 
 
 class JoyCaption:
@@ -498,9 +531,11 @@ class JoyCaptionExtraOptions:
 
 
 # Optional GGUF support
+GGUF_SUPPORT = False
 try:
     from llama_cpp import Llama
     from llama_cpp.llama_chat_format import Llava15ChatHandler
+    GGUF_SUPPORT = True
     print("[wo_joycaption_comfyui] llama-cpp-python is installed.")
 
     os.makedirs(os.path.join(folder_paths.models_dir, "llava_gguf"), exist_ok=True)

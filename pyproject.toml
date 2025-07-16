@@ -1,6 +1,6 @@
 [project]
 name = "wo_joycaption_comfyui"
-description = "A fork of fpgaminer's JoyCatpion nodes for running the JoyCaption image captioner VLM."
+description = "A fork of fpgaminer's JoyCatpion nodes for running the JoyCaption image captioner VLM. GGUF support requires maually installing llama-cpp-python with cuda support"
 version = "1.0.4"
 license = {file = "LICENSE"}
 dependencies = ["transformers>=4.51.0", "torchvision", "torch>=2.6.0", "huggingface-hub>=0.30.1", "accelerate", "bitsandbytes"]

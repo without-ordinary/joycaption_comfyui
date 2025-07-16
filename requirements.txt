@@ -4,3 +4,4 @@ torch
 huggingface-hub
 accelerate
 bitsandbytes
+pillow>=10.2.0
